@@ -646,14 +646,25 @@ func (s *Server) handleAsk(ctx context.Context, req *mcp.CallToolRequest, in ask
 		allRows = append(allRows, page.Rows...)
 	}
 
+	hasMore := totalRows > len(allRows)
+	nextPage := 0
+	if hasMore {
+		nextPage = len(pages)
+	}
+
 	auditLog("ask_success", clientIP, in.Query, fmt.Sprintf("streamed %d rows across %d pages", totalRows, len(pages)), true)
 	log.Debug().Str("tool", "ask").Int("total_rows", totalRows).Int("pages", len(pages)).
 		Int("returned_rows", len(allRows)).Dur("dur", time.Since(start)).Msg("done")
 
 	return nil, askOutput{
-		SQL:  sql,
-		Rows: allRows,
-		Note: fmt.Sprintf("%s (streamed %d pages)", note, len(pages)),
+		SQL:        sql,
+		Rows:       allRows,
+		Note:       fmt.Sprintf("%s (streamed %d pages)", note, len(pages)),
+		Page:       0,
+		PageSize:   pageSize,
+		TotalCount: totalRows,
+		HasMore:    hasMore,
+		NextPage:   nextPage,
 	}, nil
 }
 
@@ -1126,7 +1137,15 @@ Return ONLY SQL, nothing else.`
 	}
 	sql := strings.TrimSpace(resp.Choices[0].Message.Content)
 	sql = strings.Trim(sql, "```")
-	sql = strings.TrimSpace(strings.TrimPrefix(sql, "sql"))
+	sql = strings.TrimSpace(sql)
+	if strings.HasPrefix(strings.ToLower(sql), "sql") {
+		sql = strings.TrimSpace(sql[3:])
+	}
+	// Ensure we don't keep any trailing semicolons, which would break wrapping queries.
+	for strings.HasSuffix(sql, ";") {
+		sql = strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	}
+	sql = strings.TrimSpace(sql)
 	note := "model=" + s.model
 	return sql, note, nil
 }
